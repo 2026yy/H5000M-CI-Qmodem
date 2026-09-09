@@ -53,6 +53,9 @@ CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
 # 在线升级插件（所有机型启用，按本机固件版本/类型自动匹配 Release）
 CONFIG_PACKAGE_luci-app-online-upgrade=y
 
+# iStore 软件中心（linkease/istore feed）
+CONFIG_PACKAGE_luci-app-store=y
+
 # 移除多余插件
 CONFIG_PACKAGE_luci-app-attendedsysupgrade=n
 CONFIG_PACKAGE_luci-app-wol=n

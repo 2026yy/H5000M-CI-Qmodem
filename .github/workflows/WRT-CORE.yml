@@ -231,6 +231,10 @@ jobs:
         run: |
           cd ./wrt/
 
+          # iStore 软件中心（官方 feed：luci-app-store + luci-lib-taskd 等依赖）
+          echo >> feeds.conf.default
+          echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
+
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 

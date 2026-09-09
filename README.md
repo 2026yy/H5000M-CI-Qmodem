@@ -177,6 +177,7 @@ OpenWRT-CI-H5000M/
 * **USB 驱动栈扩展**：包含 `kmod-usb-core`, `kmod-usb3` 及 `kmod-usb-net-qmi-wwan` 等丰富驱动，确保系统准确识别各类移动通信模组。
 * **轻量级 NAS 存储**：支持 NVMe 固态硬盘（`kmod-nvme`）挂载，结合 BTRFS 文件系统与 Samba4 共享，轻松打造家庭数据中心。
 * **安全异地组网**：内置 EasyTier、Tailscale 等主流 SD-WAN 工具，轻松实现内网设备的远程安全访问。
+* **iStore 软件中心**：默认集成 `luci-app-store`（[linkease/istore](https://github.com/linkease/istore)），可在 LuCI 中按需搜索安装插件。
 
 <br>
 
