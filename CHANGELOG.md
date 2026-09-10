@@ -1,5 +1,15 @@
 # 更新日志
 
+## [2026-09-10]
+
+### 修复
+
+- **QModem 包版本号非法导致构建失败**（`9d7b145`）：今日（09-10）OWRT-ALL 与 MTK-AUTO 共 6 个 job（3 目标 × qmodem / qmodem-next 两变体）全部在 `Compile Firmware` 步骤失败，报 `ERROR: package/QModem/application/{libqmodem-sms, sms-tool_q} failed to build`。根因与编译、工具链、内核补丁无关：`Scripts/Packages.sh` 克隆的 QModem feed（`FUjr/QModem`）共享 `version.mk` 声明 `QMODEM_VERSION:=3.4.0-rc.3`，OpenWrt 新版 apk 打包器不接受 `-rc.N`——版本串 `3.4.0-rc.3-r1` 被 `apk mkpkg` 判为非法（Error 99），两个启用包（libqmodem-sms / sms-tool_q）打包失败即终止整个固件构建，两变体全灭。已在克隆 feed 后新增 `FIX_QMODEM_VERSION`：将 `X.Y.Z-rc.N` 改写为 apk 合法的 `X.Y.Z_rcN`（`3.4.0-rc.3` → `3.4.0_rc3`）；QModem 各包源码均内嵌 feed 仓库 `src/`，无版本化下载依赖，仅影响版本元数据；上游若已改合法则自动跳过。
+
+### 变更文件
+
+- `Scripts/Packages.sh` — 新增 `FIX_QMODEM_VERSION`（克隆 QModem 后改写共享版本号）
+
 ## [2026-08-31]
 
 ### 修复
