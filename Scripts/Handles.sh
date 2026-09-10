@@ -292,8 +292,8 @@ if "CI-DISABLE-DFS" in text:
 if needle not in text:
     sys.exit(1)
 inject = (
-    "\t# CI-DISABLE-DFS: strip DFS flags so channels need no CAC\n"
-    "\t$(SED) -e \"s/, DFS//g\" -e \"s/ DFS//g\" $(PKG_BUILD_DIR)/db.txt\n"
+    "\t# CI-DISABLE-DFS: strip DFS channel flags only; keep DFS-ETSI/FCC/JP\n"
+    "\t$(SED) -e \"s/, DFS//g\" -e \"s/ DFS,/ /g\" -e \"s/ DFS$$//\" $(PKG_BUILD_DIR)/db.txt\n"
 )
 path.write_text(text.replace(needle, inject + needle, 1), encoding="utf-8")
 PY
