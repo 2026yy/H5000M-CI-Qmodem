@@ -276,23 +276,70 @@ fi
 # OVPN_PROTO_RECVMSG_HAS_ADDR_LEN 修复（linux-compat.h + tcp.c），
 # 不再需要注入 0002 补丁（注入反而会导致 patch hunk 失败）。
 
-# AP3000M EEPROM 模板注入 (MT7981 + MT7976 DBDC 开源驱动)
-# 将备份的 EEPROM 模板（含原厂校准数据）和首次启动初始化脚本注入固件
-# 解决 eMMC 设备 factory 分区空白导致 mt76 驱动 eeprom load fail 的问题
+# ===== 关闭 DFS：监管库去 DFS 标记 + hostapd 无视雷达 / 跳过 CAC =====
+# 警告：可能违反当地无线电法规，仅限自用、风险自负。
+REGDB_MK="$PKG_PATH/firmware/wireless-regdb/Makefile"
+if [ -f "$REGDB_MK" ]; then
+	if ! grep -q 'CI-DISABLE-DFS' "$REGDB_MK"; then
+		python3 - "$REGDB_MK" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+needle = "\t$(STAGING_DIR_HOST)/bin/$(PYTHON) $(PKG_BUILD_DIR)/db2fw.py"
+if "CI-DISABLE-DFS" in text:
+    sys.exit(0)
+if needle not in text:
+    sys.exit(1)
+inject = (
+    "\t# CI-DISABLE-DFS: strip DFS flags so channels need no CAC\n"
+    "\t$(SED) -e \"s/, DFS//g\" -e \"s/ DFS//g\" $(PKG_BUILD_DIR)/db.txt\n"
+)
+path.write_text(text.replace(needle, inject + needle, 1), encoding="utf-8")
+PY
+		if [ $? -eq 0 ] && grep -q 'CI-DISABLE-DFS' "$REGDB_MK"; then
+			echo "wireless-regdb: DFS strip hook installed!"
+		else
+			echo "wireless-regdb: DFS strip hook install failed; continuing!"
+		fi
+	else
+		echo "wireless-regdb: DFS strip hook already present!"
+	fi
+else
+	echo "wireless-regdb Makefile not found; skip regdb DFS strip!"
+fi
+
+HOSTAPD_PATCH_SRC="$GITHUB_WORKSPACE/Patches/999-hostapd-ignore-dfs-radar.patch"
+HOSTAPD_PATCH_DIR="$PKG_PATH/network/services/hostapd/patches"
+if [ -f "$HOSTAPD_PATCH_SRC" ] && [ -d "$HOSTAPD_PATCH_DIR" ]; then
+	if cp "$HOSTAPD_PATCH_SRC" "$HOSTAPD_PATCH_DIR/999-hostapd-ignore-dfs-radar.patch"; then
+		echo "hostapd: DFS ignore/radar patch installed!"
+	else
+		echo "hostapd: DFS patch copy failed; continuing!"
+	fi
+else
+	echo "hostapd patches dir or source patch missing; skip hostapd DFS patch!"
+fi
+
+# AP3000M EEPROM / WiFi 首次启动脚本注入 (MT7981 + MT7976 DBDC 开源驱动)
+# 仅 AP3000M 构建需要：EEPROM 校准 + 双频默认 SSID
 AP3000M_EEPROM_DIR="$GITHUB_WORKSPACE/AP3000M-EEPROM"
-if [ -d "$AP3000M_EEPROM_DIR" ]; then
+if [[ "${WRT_CONFIG:-}" == *AP3000M* ]] && [ -d "$AP3000M_EEPROM_DIR" ]; then
 	FILES_DIR="../files"
 	mkdir -p "$FILES_DIR/lib/firmware/mediatek/"
 	mkdir -p "$FILES_DIR/etc/uci-defaults/"
 
 	if cp "$AP3000M_EEPROM_DIR/mt7981_eeprom_mt7976_dbdc.bin" \
 		"$FILES_DIR/lib/firmware/mediatek/mt7981_eeprom_mt7976_dbdc.bin" && \
+	   cp "$AP3000M_EEPROM_DIR/98-ap3000m-wifi" \
+		"$FILES_DIR/etc/uci-defaults/98-ap3000m-wifi" && \
 	   cp "$AP3000M_EEPROM_DIR/99-ap3000m-eeprom" \
 		"$FILES_DIR/etc/uci-defaults/99-ap3000m-eeprom" && \
-	   chmod +x "$FILES_DIR/etc/uci-defaults/99-ap3000m-eeprom"; then
-		echo "AP3000M: EEPROM template and init script has been injected!"
+	   chmod +x "$FILES_DIR/etc/uci-defaults/98-ap3000m-wifi" \
+		"$FILES_DIR/etc/uci-defaults/99-ap3000m-eeprom"; then
+		echo "AP3000M: EEPROM template and WiFi/EEPROM init scripts have been injected!"
 	else
-		echo "AP3000M: EEPROM injection failed; continuing!"
+		echo "AP3000M: EEPROM/WiFi injection failed; continuing!"
 	fi
 fi
 

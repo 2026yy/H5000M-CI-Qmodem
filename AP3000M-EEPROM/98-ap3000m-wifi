@@ -1,0 +1,36 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# AP3000M: set dual-band default SSIDs and fix radio1 to 5 GHz
+# Exit 1 if wireless is not ready yet so uci-defaults will retry.
+
+[ -f /etc/config/wireless ] || exit 1
+uci -q get wireless.radio0 >/dev/null || exit 1
+
+SSID_2G="Airpi-AP3000M-2.4G"
+SSID_5G="Airpi-AP3000M-5G"
+
+# MT7976 DBDC: radio1 should be 5 GHz
+if uci -q get wireless.radio1 >/dev/null; then
+	uci -q batch <<-EOF
+		set wireless.radio1.band='5g'
+		set wireless.radio1.channel='36'
+		set wireless.radio1.htmode='HE80'
+	EOF
+fi
+
+i=0
+while uci -q get wireless.radio$i >/dev/null; do
+	band=$(uci -q get wireless.radio$i.band)
+	iface="default_radio$i"
+	if uci -q get wireless.$iface >/dev/null; then
+		case "$band" in
+			2g|2G) uci -q set wireless.$iface.ssid="$SSID_2G" ;;
+			5g|5G) uci -q set wireless.$iface.ssid="$SSID_5G" ;;
+		esac
+	fi
+	i=$((i + 1))
+done
+
+uci -q commit wireless
+wifi reload 2>/dev/null &
+exit 0

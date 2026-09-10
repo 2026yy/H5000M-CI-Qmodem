@@ -1,0 +1,32 @@
+From: H5000M-CI-Qmodem <ci@local>
+Subject: [PATCH] Ignore DFS radar and skip CAC wait
+
+Allow operating on DFS channels immediately and ignore radar events.
+For private builds only; may violate local radio regulations.
+
+--- a/src/ap/dfs.c
++++ b/src/ap/dfs.c
+@@ -807,6 +807,10 @@ static unsigned int dfs_get_cac_time(struct hostapd_iface *iface,
+ 				     int start_chan_idx, int n_chans)
+ {
+ 	struct hostapd_channel_data *channel;
++
++	/* CI-DISABLE-DFS: skip Channel Availability Check wait */
++	return 0;
++
+ 	struct hostapd_hw_modes *mode;
+ 	int i;
+ 	unsigned int cac_time_ms = 0;
+@@ -1515,6 +1519,12 @@ int hostapd_dfs_radar_detected(struct hostapd_iface *iface, int freq,
+ 			       int ht_enabled, int chan_offset, int chan_width,
+ 			       int cf1, int cf2)
+ {
++	/* CI-DISABLE-DFS: ignore radar, keep AP on current DFS channel */
++	wpa_msg(iface->bss[0]->msg_ctx, MSG_INFO, DFS_EVENT_RADAR_DETECTED
++		"ignored by firmware policy (DFS disabled) freq=%d",
++		freq);
++	return 0;
++
+ 	if (!hostapd_is_freq_in_current_hw_info(iface, freq)) {
+ 		wpa_msg(iface->bss[0]->msg_ctx, MSG_INFO,
+ 			DFS_EVENT_RADAR_DETECTED

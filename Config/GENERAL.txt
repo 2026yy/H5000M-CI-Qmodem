@@ -5,6 +5,8 @@ CONFIG_PACKAGE_luci-app-homeproxy=y
 CONFIG_PACKAGE_luci-app-h5000m-netmode=y
 # 通用 QModem 模组管理界面
 CONFIG_PACKAGE_luci-app-qmodem-generic=y
+# MT5700M 模组管理 WebUI（亦适用于 MT5700GL 等同类模组）
+CONFIG_PACKAGE_luci-app-mt5700m=y
 
 # EasyTier 插件
 CONFIG_PACKAGE_easytier=y

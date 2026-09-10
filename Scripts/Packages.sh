@@ -90,7 +90,8 @@ UPDATE_PACKAGE "luci-app-h5000m-fancontrol" "FAN789/luci-app-h5000m-fancontrol" 
 if [[ "${WRT_CONFIG:-}" == *AP3000M* ]]; then
 	UPDATE_PACKAGE "luci-app-airpi-fancontrol" "LianXia233/luci-app-airpi3000m-fancontrol" "main" "all"
 fi
-UPDATE_PACKAGE "luci-app-mt5700m" "LianXia233/luci-app-mt5700m" "main"
+# 仓库内含 luci-app-mt5700m / mt5700webui-openwrt-server 等一级包，用 all 展开
+UPDATE_PACKAGE "luci-app-mt5700m" "LianXia233/luci-app-mt5700m" "main" "all"
 UPDATE_PACKAGE "luci-app-h5000m-netmode" "LianXia233/luci-app-h5000m-netmode" "main"
 
 # 在线升级插件：从 GitHub Releases 按本机实际刷入的固件版本/类型自动匹配更新包

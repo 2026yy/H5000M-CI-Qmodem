@@ -141,6 +141,8 @@ jobs:
               ;;
             AP3000M-*)
               WRT_MODEL="AirPi AP3000M"
+              # 双频默认 SSID（与 Settings.sh / 98-ap3000m-wifi 一致）
+              echo "WRT_SSID=Airpi-AP3000M-2.4G / Airpi-AP3000M-5G" >> $GITHUB_ENV
               ;;
             X86-*)
               WRT_MODEL="x86 通用平台"
