@@ -321,6 +321,46 @@ else
 	echo "hostapd patches dir or source patch missing; skip hostapd DFS patch!"
 fi
 
+# ===== FM350-GL USB RNDIS：QModem 拨号修复 =====
+# 实机结论（AP3000M + Fibocom FM350-GL）：
+# 1) GTUSBMODE=41 下 rndis 易出现 TX queue watchdog / RX=0；模式 40（PID 7126）稳定。
+# 2) ip_change_fm350 用 x.x.x.1/24 时网关 ARP 不通；应使用 /32 + gateway 0.0.0.0（onlink）。
+# 3) PDP 用 CID 1；空 APN 会导致拨号失败（APN 仍由用户/运营商配置，不在此硬编码）。
+QMODEM_FIBOCOM="$(find "$PKG_PATH" -type f -path '*/usr/share/qmodem/vendor/fibocom.sh' -print -quit 2>/dev/null)"
+QMODEM_DIAL="$(find "$PKG_PATH" -type f -path '*/usr/share/qmodem/modem_dial.sh' -print -quit 2>/dev/null)"
+if [ -f "$QMODEM_FIBOCOM" ]; then
+	if grep -q '"rndis") mode_num="41"' "$QMODEM_FIBOCOM"; then
+		# 仅改 mediatek 段中 rndis 默认：41 -> 40
+		sed -i '/"mediatek")/,/\*) mode_num=/{
+			s/"rndis") mode_num="41" ;;/"rndis") mode_num="40" ;;/
+			s/\*) mode_num="41" ;;/*) mode_num="40" ;;/
+		}' "$QMODEM_FIBOCOM"
+		if grep -q '"rndis") mode_num="40"' "$QMODEM_FIBOCOM"; then
+			echo "qmodem/fibocom: FM350 mediatek rndis default GTUSBMODE 40!"
+		else
+			echo "qmodem/fibocom: FM350 mode-40 patch may have failed; continuing!"
+		fi
+	else
+		echo "qmodem/fibocom: mediatek rndis already not 41; skip mode patch!"
+	fi
+else
+	echo "qmodem fibocom.sh not found; skip FM350 USB mode patch!"
+fi
+if [ -f "$QMODEM_DIAL" ]; then
+	if grep -q 'gateway="${ipv4_config%.*}.1"' "$QMODEM_DIAL"; then
+		sed -i 's/gateway="${ipv4_config%.*}.1"/gateway="0.0.0.0"; netmask="255.255.255.255"/' "$QMODEM_DIAL"
+		if grep -q 'gateway="0.0.0.0"; netmask="255.255.255.255"' "$QMODEM_DIAL"; then
+			echo "qmodem/modem_dial: FM350 USB IP apply /32 onlink!"
+		else
+			echo "qmodem/modem_dial: FM350 /32 patch may have failed; continuing!"
+		fi
+	else
+		echo "qmodem/modem_dial: FM350 gateway line already patched or missing; skip!"
+	fi
+else
+	echo "qmodem modem_dial.sh not found; skip FM350 IP patch!"
+fi
+
 # AP3000M EEPROM / WiFi 首次启动脚本注入 (MT7981 + MT7976 DBDC 开源驱动)
 # 仅 AP3000M 构建需要：EEPROM 校准 + 双频默认 SSID
 AP3000M_EEPROM_DIR="$GITHUB_WORKSPACE/AP3000M-EEPROM"

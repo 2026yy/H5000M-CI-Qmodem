@@ -70,6 +70,8 @@ OpenWRT-CI-H5000M/
 
 `AP3000M` 基于 [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) 的 `master` 分支编译，使用开源 `mt76` Wi-Fi 驱动栈，无需额外闭源驱动。EEPROM 通过 `Handles.sh` 在构建时自动注入，首次启动时由 `AP3000M-EEPROM/99-ap3000m-eeprom` 写入 `factory` 分区，修正 radio1 为 5G 模式。手动运行 `WRT-BUILD` 时选择 `immortalwrt/immortalwrt` + 分支 `master` 即可。
 
+内置 **Fibocom FM350-GL**（USB RNDIS）时，构建脚本会把 QModem 的默认 `GTUSBMODE` 改为 **40**（PID `0e8d:7126`），并把 `ip_change_fm350` 改为 **/32 onlink** 写地址；拨号请在 QModem 中填写运营商 APN（如移动 `CMNET`）且 PDP/CID 用 **1**。
+
 <br>
 
 ## 💖 鸣谢与致敬
