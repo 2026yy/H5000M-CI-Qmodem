@@ -278,8 +278,12 @@ fi
 
 # ===== 关闭 DFS：监管库去 DFS 标记 + hostapd 无视雷达 / 跳过 CAC =====
 # 警告：可能违反当地无线电法规，仅限自用、风险自负。
-REGDB_MK="$PKG_PATH/firmware/wireless-regdb/Makefile"
-if [ -f "$REGDB_MK" ]; then
+# 用 Python 脚本改 db.txt（勿在 Makefile 里嵌 sed/$，CI 上曾导致 db2fw 失败）。
+REGDB_DIR="$PKG_PATH/firmware/wireless-regdb"
+REGDB_MK="$REGDB_DIR/Makefile"
+REGDB_STRIP_SRC="$GITHUB_WORKSPACE/Scripts/strip-regdb-dfs.py"
+if [ -f "$REGDB_MK" ] && [ -f "$REGDB_STRIP_SRC" ]; then
+	cp -f "$REGDB_STRIP_SRC" "$REGDB_DIR/strip-regdb-dfs.py"
 	if ! grep -q 'CI-DISABLE-DFS' "$REGDB_MK"; then
 		python3 - "$REGDB_MK" <<'PY'
 from pathlib import Path
@@ -293,7 +297,7 @@ if needle not in text:
     sys.exit(1)
 inject = (
     "\t# CI-DISABLE-DFS: strip DFS channel flags only; keep DFS-ETSI/FCC/JP\n"
-    "\t$(SED) -e \"s/, DFS//g\" -e \"s/ DFS,/ /g\" -e \"s/ DFS$$//\" $(PKG_BUILD_DIR)/db.txt\n"
+    "\t$(STAGING_DIR_HOST)/bin/$(PYTHON) $(CURDIR)/strip-regdb-dfs.py $(PKG_BUILD_DIR)/db.txt\n"
 )
 path.write_text(text.replace(needle, inject + needle, 1), encoding="utf-8")
 PY
@@ -306,7 +310,7 @@ PY
 		echo "wireless-regdb: DFS strip hook already present!"
 	fi
 else
-	echo "wireless-regdb Makefile not found; skip regdb DFS strip!"
+	echo "wireless-regdb Makefile or strip script missing; skip regdb DFS strip!"
 fi
 
 HOSTAPD_PATCH_SRC="$GITHUB_WORKSPACE/Patches/999-hostapd-ignore-dfs-radar.patch"
