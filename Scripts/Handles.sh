@@ -329,9 +329,11 @@ fi
 # 实机结论（AP3000M + Fibocom FM350-GL）：
 # 1) GTUSBMODE=41 下 rndis 易出现 TX queue watchdog / RX=0；模式 40（PID 7126）稳定。
 # 2) ip_change_fm350 用 x.x.x.1/24 时网关 ARP 不通；应使用 /32 + gateway 0.0.0.0（onlink）。
-# 3) PDP 用 CID 1；空 APN 会导致拨号失败（APN 仍由用户/运营商配置，不在此硬编码）。
+# 3) PDP/CID 用 1（上游 modem_support.json 默认 0、suggest 曾为 3，都会导致 eth 无 IPv4）。
+# 4) 空/auto APN 无法正确 CGDCONT；本仓库面向国内默认 CMNET（其它运营商请在 LuCI 改 APN）。
 QMODEM_FIBOCOM="$(find "$PKG_PATH" -type f -path '*/usr/share/qmodem/vendor/fibocom.sh' -print -quit 2>/dev/null)"
 QMODEM_DIAL="$(find "$PKG_PATH" -type f -path '*/usr/share/qmodem/modem_dial.sh' -print -quit 2>/dev/null)"
+QMODEM_SUPPORT="$(find "$PKG_PATH" -type f -path '*/usr/share/qmodem/modem_support.json' -print -quit 2>/dev/null)"
 if [ -f "$QMODEM_FIBOCOM" ]; then
 	if grep -q '"rndis") mode_num="41"' "$QMODEM_FIBOCOM"; then
 		# 仅改 mediatek 段中 rndis 默认：41 -> 40
@@ -361,8 +363,91 @@ if [ -f "$QMODEM_DIAL" ]; then
 	else
 		echo "qmodem/modem_dial: FM350 gateway line already patched or missing; skip!"
 	fi
+	# fibocom/mediatek 平台建议 PDP：3 -> 1（勿动 quectel/lte 的 echo 3）
+	if grep -q 'get_platform_suggest_pdp_index' "$QMODEM_DIAL"; then
+		python3 - "$QMODEM_DIAL" <<'PY'
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1])
+text = p.read_text(encoding="utf-8", errors="ignore")
+pat = re.compile(
+    r"(get_platform_suggest_pdp_index\(\)\s*\{.*?fibocom\)\s*"
+    r"case \$platform in\s*mediatek\)\s*)echo 3",
+    re.S,
+)
+new, n = pat.subn(r"\1echo 1", text, count=1)
+if n:
+    p.write_text(new, encoding="utf-8")
+    print("qmodem/modem_dial: fibocom/mediatek suggest_pdp_index 1!")
+else:
+    if "mediatek)\n                echo 1" in text or "mediatek)\n\t\techo 1" in text:
+        print("qmodem/modem_dial: suggest_pdp already 1; skip!")
+    else:
+        print("qmodem/modem_dial: suggest_pdp patch may have failed; continuing!")
+PY
+	fi
+	# mediatek 拨号：空/auto APN 默认 CMNET
+	python3 - "$QMODEM_DIAL" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+text = p.read_text(encoding="utf-8", errors="ignore")
+if 'apn="CMNET"' in text:
+    print("qmodem/modem_dial: CMNET APN already present; skip!")
+    raise SystemExit(0)
+old_comment = '# [ "$apn" = "auto" ] || [ -z "$apn" ] && apn="cbnet"'
+old_active = '[ "$apn" = "auto" ] || [ -z "$apn" ] && apn="cbnet"'
+new = '[ "$apn" = "auto" ] || [ -z "$apn" ] && apn="CMNET"'
+before = text
+text = text.replace(old_comment, new).replace(old_active, new)
+if text != before:
+    p.write_text(text, encoding="utf-8")
+    print("qmodem/modem_dial: FM350 mediatek empty APN -> CMNET!")
+    raise SystemExit(0)
+marker = '                "mediatek")\n                    # delay=3'
+insert = (
+    '                "mediatek")\n'
+    '                    [ "$apn" = "auto" ] || [ -z "$apn" ] && apn="CMNET"\n'
+    '                    # delay=3'
+)
+if marker in text:
+    p.write_text(text.replace(marker, insert, 1), encoding="utf-8")
+    print("qmodem/modem_dial: inserted CMNET default for mediatek!")
+else:
+    print("qmodem/modem_dial: CMNET APN patch may have failed; continuing!")
+PY
 else
-	echo "qmodem modem_dial.sh not found; skip FM350 IP patch!"
+	echo "qmodem modem_dial.sh not found; skip FM350 IP/APN/PDP patches!"
+fi
+# modem_support.json：fm350*/rw350* 默认 pdp_index 0 -> 1（写入 suggest_pdp_index）
+if [ -f "$QMODEM_SUPPORT" ]; then
+	python3 - "$QMODEM_SUPPORT" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = json.loads(p.read_text(encoding="utf-8"))
+keys = {"fm350-gl", "fm350-gl-00", "fm350r-gl", "rw350r-gl"}
+changed = 0
+
+def walk(obj):
+    global changed
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in keys and isinstance(v, dict) and str(v.get("pdp_index")) == "0":
+                v["pdp_index"] = "1"
+                changed += 1
+            else:
+                walk(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            walk(item)
+
+walk(data)
+if changed:
+    p.write_text(json.dumps(data, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"qmodem/modem_support: patched {changed} FM350 pdp_index -> 1!")
+else:
+    print("qmodem/modem_support: FM350 pdp_index already 1 or entries missing; skip!")
+PY
+else
+	echo "qmodem modem_support.json not found; skip FM350 pdp_index patch!"
 fi
 
 # AP3000M EEPROM / WiFi 首次启动脚本注入 (MT7981 + MT7976 DBDC 开源驱动)
@@ -375,15 +460,18 @@ if [[ "${WRT_CONFIG:-}" == *AP3000M* ]] && [ -d "$AP3000M_EEPROM_DIR" ]; then
 
 	if cp "$AP3000M_EEPROM_DIR/mt7981_eeprom_mt7976_dbdc.bin" \
 		"$FILES_DIR/lib/firmware/mediatek/mt7981_eeprom_mt7976_dbdc.bin" && \
+	   cp "$AP3000M_EEPROM_DIR/97-ap3000m-fm350" \
+		"$FILES_DIR/etc/uci-defaults/97-ap3000m-fm350" && \
 	   cp "$AP3000M_EEPROM_DIR/98-ap3000m-wifi" \
 		"$FILES_DIR/etc/uci-defaults/98-ap3000m-wifi" && \
 	   cp "$AP3000M_EEPROM_DIR/99-ap3000m-eeprom" \
 		"$FILES_DIR/etc/uci-defaults/99-ap3000m-eeprom" && \
-	   chmod +x "$FILES_DIR/etc/uci-defaults/98-ap3000m-wifi" \
+	   chmod +x "$FILES_DIR/etc/uci-defaults/97-ap3000m-fm350" \
+		"$FILES_DIR/etc/uci-defaults/98-ap3000m-wifi" \
 		"$FILES_DIR/etc/uci-defaults/99-ap3000m-eeprom"; then
-		echo "AP3000M: EEPROM template and WiFi/EEPROM init scripts have been injected!"
+		echo "AP3000M: EEPROM template, FM350 dial defaults and WiFi/EEPROM init scripts have been injected!"
 	else
-		echo "AP3000M: EEPROM/WiFi injection failed; continuing!"
+		echo "AP3000M: EEPROM/WiFi/FM350 injection failed; continuing!"
 	fi
 fi
 

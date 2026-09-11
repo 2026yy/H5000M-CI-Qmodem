@@ -1,0 +1,36 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# AP3000M: bake FM350 dial defaults after modem appears.
+# Exit 1 until qmodem has scanned an FM350 so uci-defaults will retry.
+
+found=0
+changed=0
+
+for s in $(uci -q show qmodem 2>/dev/null | sed -n 's/^qmodem\.\([^=]*\)=modem-device/\1/p'); do
+	name=$(uci -q get "qmodem.$s.name")
+	case "$name" in
+		fm350*|rw350*)
+			found=1
+			apn=$(uci -q get "qmodem.$s.apn")
+			case "$apn" in
+				""|auto) uci -q set "qmodem.$s.apn=CMNET"; changed=1 ;;
+			esac
+			pdp=$(uci -q get "qmodem.$s.pdp_index")
+			case "$pdp" in
+				""|0|3) uci -q set "qmodem.$s.pdp_index=1"; changed=1 ;;
+			esac
+			sug=$(uci -q get "qmodem.$s.suggest_pdp_index")
+			case "$sug" in
+				""|0|3) uci -q set "qmodem.$s.suggest_pdp_index=1"; changed=1 ;;
+			esac
+			;;
+	esac
+done
+
+[ "$found" = "1" ] || exit 1
+
+if [ "$changed" = "1" ]; then
+	uci -q commit qmodem
+	/etc/init.d/qmodem_network restart >/dev/null 2>&1 &
+fi
+exit 0
