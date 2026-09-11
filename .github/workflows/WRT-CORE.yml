@@ -90,6 +90,11 @@ jobs:
           sudo -E systemctl daemon-reload
           sudo -E timedatectl set-timezone "Asia/Shanghai"
 
+          # dockerd（moby）hack/make binary-daemon：GitHub runner 若存在
+          # /usr/local/bin/runc（如 Podman 附带）但缺少 nested bins，会执行
+          # cp '' 导致编译失败（moby#53442）。挪开后 copy_binaries 早退即可。
+          sudo mv /usr/local/bin/runc /usr/local/bin/runc.gha-bak 2>/dev/null || true
+
           sudo mkdir -p /mnt/build_wrt
           sudo chown $USER:$USER /mnt/build_wrt
           sudo ln -s /mnt/build_wrt $GITHUB_WORKSPACE/wrt

@@ -72,6 +72,8 @@ OpenWRT-CI-H5000M/
 
 内置 **Fibocom FM350-GL**（USB RNDIS）时，构建脚本会把 QModem 的默认 `GTUSBMODE` 改为 **40**（PID `0e8d:7126`），并把 `ip_change_fm350` 改为 **/32 onlink** 写地址；拨号请在 QModem 中填写运营商 APN（如移动 `CMNET`）且 PDP/CID 用 **1**。
 
+已集成 **Docker**（`luci-app-dockerman` / `dockerd`）；建议在 **16G** 存储机型使用，容器数据放可写分区，勿塞满 rootfs。X86 配置暂未启用 Docker。
+
 <br>
 
 ## 💖 鸣谢与致敬

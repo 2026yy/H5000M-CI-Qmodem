@@ -27,3 +27,6 @@ CONFIG_PACKAGE_kmod-airpi-gpio-fan=y
 # luci-compat / luci-lua-runtime 已移除：风扇插件 v4.0 起为纯 JS 实现（仅依赖 luci-base），
 # 这两个遗留 Lua 兼容层无人使用，在新版 immortalwrt 中也不存在，保留只会额外编译一整套 Lua 依赖
 CONFIG_PACKAGE_kmod-hwmon-pwmfan=y
+
+# Docker（建议 16G 存储；容器数据放可写分区，勿塞满 rootfs）
+CONFIG_PACKAGE_luci-app-dockerman=y
