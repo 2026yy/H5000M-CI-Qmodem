@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Enable FM350 WAN watchdog on first boot (AP3000M).
+
+[ -x /usr/sbin/ap3000m-fm350-watch ] || exit 0
+[ -x /etc/init.d/ap3000m-fm350-watch ] || exit 0
+
+/etc/init.d/ap3000m-fm350-watch enable
+/etc/init.d/ap3000m-fm350-watch start
+exit 0

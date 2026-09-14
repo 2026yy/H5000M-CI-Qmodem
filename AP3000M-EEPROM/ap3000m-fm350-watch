@@ -1,0 +1,273 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# AP3000M FM350 RNDIS watchdog: detect TX-without-RX / no-WAN and soft-reboot modem.
+#
+# Usage:
+#   ap3000m-fm350-watch           # one-shot check
+#   ap3000m-fm350-watch daemon    # loop (for procd)
+
+INTERVAL="${FM350_WATCH_INTERVAL:-180}"
+FAILS_NEED="${FM350_WATCH_FAILS:-2}"
+COOLDOWN="${FM350_WATCH_COOLDOWN:-1200}"
+PING_TARGET="${FM350_WATCH_PING:-223.5.5.5}"
+STATE_FILE="/tmp/ap3000m-fm350-watch.state"
+LOCK_FILE="/var/lock/ap3000m-fm350-watch.lock"
+LOG_TAG="fm350-watch"
+
+log() {
+	logger -t "$LOG_TAG" "$@"
+	echo "$(date '+%F %T') $*" >> /tmp/ap3000m-fm350-watch.log 2>/dev/null
+}
+
+load_state() {
+	fails=0
+	last_fix=0
+	[ -f "$STATE_FILE" ] && . "$STATE_FILE"
+}
+
+save_state() {
+	cat > "$STATE_FILE" <<EOF
+fails=$fails
+last_fix=$last_fix
+EOF
+}
+
+find_modem_section() {
+	local s name
+	for s in $(uci -q show qmodem 2>/dev/null | sed -n 's/^qmodem\.\([^=]*\)=modem-device/\1/p'); do
+		name=$(uci -q get "qmodem.$s.name" 2>/dev/null)
+		case "$name" in
+			fm350*|rw350*)
+				echo "$s"
+				return 0
+				;;
+		esac
+	done
+	return 1
+}
+
+modem_iface() {
+	local cfg="$1" netdev
+	netdev=$(uci -q get "qmodem.$cfg.network")
+	[ -n "$netdev" ] && [ -d "/sys/class/net/$netdev" ] && {
+		echo "$netdev"
+		return 0
+	}
+	# fallback: USB 0e8d netdev
+	local n
+	for n in /sys/class/net/*; do
+		[ -e "$n/device" ] || continue
+		readlink -f "$n/device" 2>/dev/null | grep -q '/2-1' || continue
+		basename "$n"
+		return 0
+	done
+	return 1
+}
+
+at_port_of() {
+	uci -q get "qmodem.$1.at_port"
+}
+
+sendat() {
+	local port="$1" cmd="$2" esc
+	esc=$(printf '%s' "$cmd" | sed 's/\\/\\\\/g; s/"/\\"/g')
+	ubus -t 12 call at-daemon sendat \
+		"{\"at_port\":\"$port\",\"at_cmd\":\"$esc\",\"timeout\":10}" 2>/dev/null
+}
+
+wan_ok() {
+	ping -c 2 -W 2 "$PING_TARGET" >/dev/null 2>&1
+}
+
+# Classic FM350 failure: packets leave ethX but nothing returns
+rndis_rx_dead() {
+	local iface="$1" rx1 tx1 rx2 tx2
+	[ -d "/sys/class/net/$iface" ] || return 1
+	rx1=$(cat "/sys/class/net/$iface/statistics/rx_packets" 2>/dev/null) || return 1
+	tx1=$(cat "/sys/class/net/$iface/statistics/tx_packets" 2>/dev/null) || return 1
+	ping -I "$iface" -c 3 -W 2 "$PING_TARGET" >/dev/null 2>&1
+	rx2=$(cat "/sys/class/net/$iface/statistics/rx_packets" 2>/dev/null)
+	tx2=$(cat "/sys/class/net/$iface/statistics/tx_packets" 2>/dev/null)
+	[ "$((tx2 - tx1))" -ge 2 ] && [ "$((rx2 - rx1))" -eq 0 ]
+}
+
+modem_present() {
+	lsusb 2>/dev/null | grep -qi '0e8d:' && return 0
+	[ -e /sys/bus/usb/devices/2-1/idVendor ] || return 1
+	grep -qi '^0e8d$' /sys/bus/usb/devices/2-1/idVendor 2>/dev/null
+}
+
+wait_modem_back() {
+	local i port="$1"
+	for i in $(seq 1 60); do
+		if modem_present && { [ -e "$port" ] || [ -e /dev/ttyUSB1 ]; }; then
+			local p="$port"
+			[ -e "$p" ] || p=/dev/ttyUSB1
+			sendat "$p" "AT" | grep -q '"status": "success"' && return 0
+		fi
+		sleep 2
+	done
+	return 1
+}
+
+wait_registered() {
+	local port="$1" i r
+	for i in $(seq 1 30); do
+		r=$(sendat "$port" "AT+CEREG?")
+		echo "$r" | grep -qE '\+CEREG: [0-9]+,[15]' && return 0
+		sleep 2
+	done
+	return 1
+}
+
+apply_ip_from_cgpaddr() {
+	local port="$1" iface="$2" raw ip
+	raw=$(sendat "$port" "AT+CGPADDR=1")
+	ip=$(echo "$raw" | tr -d '\\' | sed -n 's/.*+CGPADDR: 1,"\([0-9.]*\)".*/\1/p')
+	[ -n "$ip" ] && [ "$ip" != "0.0.0.0" ] || return 1
+	[ -d "/sys/class/net/$iface" ] || iface=$(modem_iface "$(find_modem_section)") || return 1
+	ip link set "$iface" up 2>/dev/null
+	ip addr flush dev "$iface" 2>/dev/null
+	ip addr add "$ip/32" brd 255.255.255.255 dev "$iface" 2>/dev/null || return 1
+	while ip route del default 2>/dev/null; do :; done
+	ip route add default dev "$iface" metric 11 2>/dev/null
+	uci -q set "network.2_1.ipaddr=$ip"
+	uci -q set network.2_1.netmask='255.255.255.255'
+	uci -q set network.2_1.gateway='0.0.0.0'
+	uci -q commit network
+	log "applied $ip/32 on $iface"
+	return 0
+}
+
+soft_fix() {
+	local cfg="$1" iface="$2" port
+	port=$(at_port_of "$cfg")
+	[ -n "$port" ] || port=/dev/ttyUSB1
+
+	log "soft-fix: AT+CFUN=1,1 via $port (iface=$iface)"
+	sendat "$port" "AT+CFUN=1,1" >/dev/null
+
+	# dialers may wedge during reenum — clear them (do not call qmodem_network stop; it can hang)
+	killall -9 modem_dial.sh 2>/dev/null
+
+	sleep 5
+	if ! wait_modem_back "$port"; then
+		log "soft-fix: modem did not return"
+		return 1
+	fi
+	port=$(at_port_of "$cfg")
+	[ -n "$port" ] || port=/dev/ttyUSB1
+	[ -e "$port" ] || port=/dev/ttyUSB1
+
+	# keep mode 40
+	sendat "$port" "AT+GTUSBMODE?" | grep -q '+GTUSBMODE: 40' || \
+		sendat "$port" "AT+GTUSBMODE=40" >/dev/null
+
+	wait_registered "$port" || log "soft-fix: register timeout, continue anyway"
+
+	sendat "$port" "AT+CGDCONT=1,\"IPV4V6\",\"CMNET\"" >/dev/null
+	sendat "$port" "AT+CGACT=1,1" >/dev/null
+	sleep 3
+
+	iface=$(modem_iface "$cfg") || iface=eth2
+	apply_ip_from_cgpaddr "$port" "$iface" || true
+
+	# restart dialer without hanging init stop
+	[ -x /usr/share/qmodem/modem_dial.sh ] && \
+		/usr/share/qmodem/modem_dial.sh "$cfg" dial >/dev/null 2>&1 &
+
+	sleep 5
+	if wan_ok; then
+		log "soft-fix: WAN recovered"
+		return 0
+	fi
+	# one more IP apply after dial settled
+	iface=$(modem_iface "$cfg") || iface=eth2
+	apply_ip_from_cgpaddr "$port" "$iface" || true
+	sleep 3
+	wan_ok && log "soft-fix: WAN recovered after re-apply" && return 0
+	log "soft-fix: WAN still down"
+	return 1
+}
+
+do_check() {
+	local cfg iface now
+
+	cfg=$(find_modem_section) || {
+		log "no FM350 section; skip"
+		return 0
+	}
+	[ "$(uci -q get "qmodem.$cfg.enable_dial")" = "1" ] || {
+		log "dial disabled; skip"
+		return 0
+	}
+	modem_present || {
+		log "modem USB absent; skip"
+		return 0
+	}
+
+	iface=$(modem_iface "$cfg") || {
+		log "modem iface missing; skip"
+		return 0
+	}
+
+	load_state
+	now=$(date +%s)
+
+	if wan_ok; then
+		fails=0
+		save_state
+		return 0
+	fi
+
+	# confirm it looks like RNDIS death or total no-route, not just DNS
+	if ! rndis_rx_dead "$iface"; then
+		# still no WAN — count as fail (route missing / PDP stale)
+		if ping -c 1 -W 1 127.0.0.1 >/dev/null 2>&1; then
+			fails=$((fails + 1))
+			log "WAN fail ($fails/$FAILS_NEED) iface=$iface (not classic rx0)"
+		fi
+	else
+		fails=$((fails + 1))
+		log "WAN fail ($fails/$FAILS_NEED) iface=$iface RX=0 while TX grows"
+	fi
+	save_state
+
+	[ "$fails" -ge "$FAILS_NEED" ] || return 0
+
+	if [ $((now - last_fix)) -lt "$COOLDOWN" ]; then
+		log "in cooldown ($((now - last_fix))s < ${COOLDOWN}s); skip fix"
+		return 0
+	fi
+
+	# lock
+	mkdir "$LOCK_FILE" 2>/dev/null || {
+		log "fix already running"
+		return 0
+	}
+	trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT
+
+	if soft_fix "$cfg" "$iface"; then
+		fails=0
+		last_fix=$(date +%s)
+	else
+		last_fix=$(date +%s)
+		fails=0
+	fi
+	save_state
+	rmdir "$LOCK_FILE" 2>/dev/null
+	trap - EXIT
+}
+
+daemon_loop() {
+	log "daemon start interval=${INTERVAL}s fails_need=$FAILS_NEED cooldown=${COOLDOWN}s"
+	while true; do
+		do_check
+		sleep "$INTERVAL"
+	done
+}
+
+case "$1" in
+	daemon) daemon_loop ;;
+	*) do_check ;;
+esac

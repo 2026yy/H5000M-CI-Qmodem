@@ -458,18 +458,28 @@ if [[ "${WRT_CONFIG:-}" == *AP3000M* ]] && [ -d "$AP3000M_EEPROM_DIR" ]; then
 	mkdir -p "$FILES_DIR/lib/firmware/mediatek/"
 	mkdir -p "$FILES_DIR/etc/uci-defaults/"
 
+	mkdir -p "$FILES_DIR/usr/sbin" "$FILES_DIR/etc/init.d"
 	if cp "$AP3000M_EEPROM_DIR/mt7981_eeprom_mt7976_dbdc.bin" \
 		"$FILES_DIR/lib/firmware/mediatek/mt7981_eeprom_mt7976_dbdc.bin" && \
+	   cp "$AP3000M_EEPROM_DIR/ap3000m-fm350-watch" \
+		"$FILES_DIR/usr/sbin/ap3000m-fm350-watch" && \
+	   cp "$AP3000M_EEPROM_DIR/ap3000m-fm350-watch.init" \
+		"$FILES_DIR/etc/init.d/ap3000m-fm350-watch" && \
+	   cp "$AP3000M_EEPROM_DIR/96-ap3000m-fm350-watch" \
+		"$FILES_DIR/etc/uci-defaults/96-ap3000m-fm350-watch" && \
 	   cp "$AP3000M_EEPROM_DIR/97-ap3000m-fm350" \
 		"$FILES_DIR/etc/uci-defaults/97-ap3000m-fm350" && \
 	   cp "$AP3000M_EEPROM_DIR/98-ap3000m-wifi" \
 		"$FILES_DIR/etc/uci-defaults/98-ap3000m-wifi" && \
 	   cp "$AP3000M_EEPROM_DIR/99-ap3000m-eeprom" \
 		"$FILES_DIR/etc/uci-defaults/99-ap3000m-eeprom" && \
-	   chmod +x "$FILES_DIR/etc/uci-defaults/97-ap3000m-fm350" \
+	   chmod +x "$FILES_DIR/usr/sbin/ap3000m-fm350-watch" \
+		"$FILES_DIR/etc/init.d/ap3000m-fm350-watch" \
+		"$FILES_DIR/etc/uci-defaults/96-ap3000m-fm350-watch" \
+		"$FILES_DIR/etc/uci-defaults/97-ap3000m-fm350" \
 		"$FILES_DIR/etc/uci-defaults/98-ap3000m-wifi" \
 		"$FILES_DIR/etc/uci-defaults/99-ap3000m-eeprom"; then
-		echo "AP3000M: EEPROM template, FM350 dial defaults and WiFi/EEPROM init scripts have been injected!"
+		echo "AP3000M: EEPROM, FM350 dial/watchdog and WiFi init scripts injected!"
 	else
 		echo "AP3000M: EEPROM/WiFi/FM350 injection failed; continuing!"
 	fi
