@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Default-enable miniupnpd (package ships enabled=0).
+
+uci -q get upnpd.config >/dev/null || exit 0
+uci -q set upnpd.config.enabled='1'
+uci -q set upnpd.config.enable_upnp='1'
+uci -q set upnpd.config.enable_natpmp='1'
+uci -q commit upnpd
+[ -x /etc/init.d/miniupnpd ] && /etc/init.d/miniupnpd enable
+exit 0

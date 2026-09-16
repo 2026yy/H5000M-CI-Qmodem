@@ -485,6 +485,19 @@ if [[ "${WRT_CONFIG:-}" == *AP3000M* ]] && [ -d "$AP3000M_EEPROM_DIR" ]; then
 	fi
 fi
 
+# ===== 默认开启 UPnP（与实机策略一致；上游 miniupnpd 默认 enabled=0）=====
+UPNP_DEFAULTS="$GITHUB_WORKSPACE/Scripts/uci-defaults/95-enable-upnp"
+UPNP_FILES_DIR="../files"
+if [ -f "$UPNP_DEFAULTS" ]; then
+	mkdir -p "$UPNP_FILES_DIR/etc/uci-defaults"
+	if cp "$UPNP_DEFAULTS" "$UPNP_FILES_DIR/etc/uci-defaults/95-enable-upnp" && \
+	   chmod +x "$UPNP_FILES_DIR/etc/uci-defaults/95-enable-upnp"; then
+		echo "upnp: default-enable uci-defaults injected!"
+	else
+		echo "upnp: inject failed; continuing!"
+	fi
+fi
+
 # ===== luci-app-online-upgrade：设备身份烙入 + 定制脚本覆盖 =====
 # 1) 将本机构建身份写入固件（/etc/online-upgrade-device），供在线升级插件按机型动态匹配 Release。
 #    发布标签格式为 {配置名}-{源码owner}-{分支}-{日期}（与 WRT-CORE 的 Release 标签完全一致）。

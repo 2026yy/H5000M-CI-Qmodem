@@ -74,6 +74,8 @@ OpenWRT-CI-H5000M/
 
 已集成 **Docker**（`luci-app-dockerman` / `dockerd`）；建议在 **16G** 存储机型使用，容器数据放可写分区，勿塞满 rootfs。X86 配置暂未启用 Docker。
 
+默认开启 **UPnP/NAT-PMP**（`luci-app-upnp` + 首次启动 `95-enable-upnp`）；IPv4 **全锥 NAT** 由 ImmortalWrt `firewall.fullcone` / `kmod-nft-fullcone` 提供。
+
 <br>
 
 ## 💖 鸣谢与致敬
