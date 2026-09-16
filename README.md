@@ -72,7 +72,7 @@ OpenWRT-CI-H5000M/
 
 内置 **Fibocom FM350-GL**（USB RNDIS）时，构建脚本会固化拨号默认：`GTUSBMODE` **40**（PID `0e8d:7126`）、`ip_change_fm350` **/32 onlink**、`modem_support`/`suggest_pdp` 的 PDP/CID **1**、空 APN 默认 **CMNET**（移动；联通/电信请在 LuCI 改 APN）。AP3000M 另注入 `97-ap3000m-fm350` 纠偏旧默认值，以及 **`ap3000m-fm350-watch`**（约每 3 分钟检测外网；连续失败且出现 TX 有/RX 无时自动 `CFUN=1,1` 软重启并重拨，冷却约 20 分钟）。
 
-已集成 **Docker**（`luci-app-dockerman` / `dockerd`）；建议在 **16G** 存储机型使用，容器数据放可写分区，勿塞满 rootfs。X86 配置暂未启用 Docker。
+已集成 **Docker**（`luci-app-dockerman` / `dockerd`）；建议在 **16G** 存储机型使用，容器数据放可写分区，勿塞满 rootfs。X86 配置暂未启用 Docker。默认 **`dockerd.iptables=0`**，由 fw4/nft 防火墙区管理，避免与 nftables 混用触发「检测到旧版规则」。
 
 默认开启 **UPnP/NAT-PMP**（`luci-app-upnp` + 首次启动 `95-enable-upnp`）；IPv4 **全锥 NAT** 由 ImmortalWrt `firewall.fullcone` / `kmod-nft-fullcone` 提供。
 

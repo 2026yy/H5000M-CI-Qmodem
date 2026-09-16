@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Docker on OpenWrt/fw4: disable dockerd iptables backend to avoid
+# mixing iptables (compat) rules with nftables (LuCI "legacy rules" warning).
+# Container isolation uses firewall zone "docker" instead.
+
+uci -q get dockerd.globals >/dev/null || exit 0
+uci -q set dockerd.globals.iptables='0'
+uci -q set dockerd.globals.ip6tables='0'
+uci -q commit dockerd
+exit 0

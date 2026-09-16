@@ -485,6 +485,19 @@ if [[ "${WRT_CONFIG:-}" == *AP3000M* ]] && [ -d "$AP3000M_EEPROM_DIR" ]; then
 	fi
 fi
 
+# ===== Docker：禁用 dockerd iptables，避免与 fw4/nft 混用（LuCI「旧版规则」告警）=====
+DOCKER_NFT_DEFAULTS="$GITHUB_WORKSPACE/Scripts/uci-defaults/94-docker-fw4-nft"
+DOCKER_NFT_FILES_DIR="../files"
+if [ -f "$DOCKER_NFT_DEFAULTS" ]; then
+	mkdir -p "$DOCKER_NFT_FILES_DIR/etc/uci-defaults"
+	if cp "$DOCKER_NFT_DEFAULTS" "$DOCKER_NFT_FILES_DIR/etc/uci-defaults/94-docker-fw4-nft" && \
+	   chmod +x "$DOCKER_NFT_FILES_DIR/etc/uci-defaults/94-docker-fw4-nft"; then
+		echo "docker: fw4/nft iptables=0 uci-defaults injected!"
+	else
+		echo "docker: fw4/nft inject failed; continuing!"
+	fi
+fi
+
 # ===== 默认开启 UPnP（与实机策略一致；上游 miniupnpd 默认 enabled=0）=====
 UPNP_DEFAULTS="$GITHUB_WORKSPACE/Scripts/uci-defaults/95-enable-upnp"
 UPNP_FILES_DIR="../files"
