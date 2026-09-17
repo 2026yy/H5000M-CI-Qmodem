@@ -1,0 +1,45 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Force Fibocom FM350 USB mode 40 (PID 0e8d:7126). Mode 41 (7127) breaks RNDIS on AP3000M.
+#
+# Usage: ap3000m-fm350-enforce-mode40
+# Exit 0 if already 40 / fixed; 1 if modem absent or AT failed.
+
+LOG_TAG="fm350-mode40"
+log() { logger -t "$LOG_TAG" "$@"; }
+
+at_port=""
+for p in /dev/ttyUSB1 /dev/ttyUSB3 /dev/ttyUSB0 /dev/ttyUSB2 /dev/ttyUSB4; do
+	[ -e "$p" ] || continue
+	at_port=$p
+	break
+done
+[ -n "$at_port" ] || at_port=$(uci -q get qmodem.2_1.at_port)
+[ -n "$at_port" ] || exit 1
+[ -e "$at_port" ] || exit 1
+
+# Already correct USB PID — nothing to do
+if lsusb 2>/dev/null | grep -q '0e8d:7126'; then
+	exit 0
+fi
+
+# No FM350
+lsusb 2>/dev/null | grep -qi '0e8d:' || exit 1
+
+sendat() {
+	esc=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')
+	ubus -t 12 call at-daemon sendat \
+		"{\"at_port\":\"$at_port\",\"at_cmd\":\"$esc\",\"timeout\":10}" 2>/dev/null
+}
+
+# Quiet AT spam briefly
+killall -9 tom_modem 2>/dev/null
+sleep 1
+
+resp=$(sendat "AT+GTUSBMODE?")
+echo "$resp" | grep -q '+GTUSBMODE: 40' && exit 0
+
+log "FM350 not in mode 40 (USB not 7126); setting GTUSBMODE=40 and soft-rebooting"
+sendat "AT+GTUSBMODE=40" >/dev/null
+sendat "AT+CFUN=1,1" >/dev/null
+exit 0

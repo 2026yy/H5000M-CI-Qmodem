@@ -33,4 +33,8 @@ if [ "$changed" = "1" ]; then
 	uci -q commit qmodem
 	/etc/init.d/qmodem_network restart >/dev/null 2>&1 &
 fi
+
+# Ensure USB mode 40 (never leave factory/upstream stuck on 41)
+[ -x /usr/sbin/ap3000m-fm350-enforce-mode40 ] && /usr/sbin/ap3000m-fm350-enforce-mode40
+
 exit 0

@@ -235,6 +235,13 @@ do_check() {
 		return 0
 	}
 
+	# Hard lock: mode 41 (PID 7127) is known-broken on this board — force 40.
+	if lsusb 2>/dev/null | grep -q '0e8d:7127'; then
+		log "USB PID 7127 (mode 41) detected; enforcing GTUSBMODE=40"
+		[ -x /usr/sbin/ap3000m-fm350-enforce-mode40 ] && /usr/sbin/ap3000m-fm350-enforce-mode40
+		return 0
+	fi
+
 	iface=$(modem_iface "$cfg") || {
 		log "modem iface missing; skip"
 		return 0

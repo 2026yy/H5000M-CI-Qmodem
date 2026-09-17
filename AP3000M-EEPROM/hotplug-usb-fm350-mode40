@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# USB hotplug: if FM350 appears as mode 41 (7127), force back to 40.
+
+[ "$ACTION" = "add" ] || exit 0
+
+case "$PRODUCT" in
+	*0e8d/7127*|*0e8d/7126*)
+		;;
+	*)
+		# PRODUCT may be hex without leading zeros
+		case "$PRODUCT" in
+			*e8d/7127*|*e8d/7126*) ;;
+			*) exit 0 ;;
+		esac
+		;;
+esac
+
+# Defer so tty/AT are ready; only act on 7127
+(
+	sleep 8
+	lsusb 2>/dev/null | grep -q '0e8d:7127' || exit 0
+	[ -x /usr/sbin/ap3000m-fm350-enforce-mode40 ] && /usr/sbin/ap3000m-fm350-enforce-mode40
+) >/dev/null 2>&1 &
+
+exit 0
