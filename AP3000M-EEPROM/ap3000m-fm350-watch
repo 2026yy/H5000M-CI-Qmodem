@@ -6,9 +6,12 @@
 #   ap3000m-fm350-watch           # one-shot check
 #   ap3000m-fm350-watch daemon    # loop (for procd)
 
-INTERVAL="${FM350_WATCH_INTERVAL:-180}"
+INTERVAL="${FM350_WATCH_INTERVAL:-120}"
 FAILS_NEED="${FM350_WATCH_FAILS:-2}"
-COOLDOWN="${FM350_WATCH_COOLDOWN:-1200}"
+# After a *successful* fix, avoid churn.
+COOLDOWN_OK="${FM350_WATCH_COOLDOWN:-900}"
+# After a *failed* fix, retry sooner (previous 1200s left WAN dead for ~20min).
+COOLDOWN_FAIL="${FM350_WATCH_COOLDOWN_FAIL:-180}"
 PING_TARGET="${FM350_WATCH_PING:-223.5.5.5}"
 STATE_FILE="/tmp/ap3000m-fm350-watch.state"
 LOCK_FILE="/var/lock/ap3000m-fm350-watch.lock"
@@ -22,6 +25,7 @@ log() {
 load_state() {
 	fails=0
 	last_fix=0
+	last_fix_ok=0
 	[ -f "$STATE_FILE" ] && . "$STATE_FILE"
 }
 
@@ -29,6 +33,7 @@ save_state() {
 	cat > "$STATE_FILE" <<EOF
 fails=$fails
 last_fix=$last_fix
+last_fix_ok=$last_fix_ok
 EOF
 }
 
@@ -53,7 +58,6 @@ modem_iface() {
 		echo "$netdev"
 		return 0
 	}
-	# fallback: USB 0e8d netdev
 	local n
 	for n in /sys/class/net/*; do
 		[ -e "$n/device" ] || continue
@@ -71,15 +75,14 @@ at_port_of() {
 sendat() {
 	local port="$1" cmd="$2" esc
 	esc=$(printf '%s' "$cmd" | sed 's/\\/\\\\/g; s/"/\\"/g')
-	ubus -t 12 call at-daemon sendat \
-		"{\"at_port\":\"$port\",\"at_cmd\":\"$esc\",\"timeout\":10}" 2>/dev/null
+	ubus -t 15 call at-daemon sendat \
+		"{\"at_port\":\"$port\",\"at_cmd\":\"$esc\",\"timeout\":12}" 2>/dev/null
 }
 
 wan_ok() {
 	ping -c 2 -W 2 "$PING_TARGET" >/dev/null 2>&1
 }
 
-# Classic FM350 failure: packets leave ethX but nothing returns
 rndis_rx_dead() {
 	local iface="$1" rx1 tx1 rx2 tx2
 	[ -d "/sys/class/net/$iface" ] || return 1
@@ -97,12 +100,24 @@ modem_present() {
 	grep -qi '^0e8d$' /sys/bus/usb/devices/2-1/idVendor 2>/dev/null
 }
 
+# Free AT port: qmodem stats/ctrl spam blocks CFUN/CGACT during recovery.
+quiet_at_contenders() {
+	killall -9 modem_dial.sh 2>/dev/null
+	killall -9 tom_modem 2>/dev/null
+	killall -9 modem_ctrl.sh 2>/dev/null
+	killall -9 qmodem-stats-loop 2>/dev/null
+	# stop runaway info collectors briefly
+	killall -9 qmodem 2>/dev/null
+	sleep 1
+}
+
 wait_modem_back() {
-	local i port="$1"
+	local i port="$1" p
 	for i in $(seq 1 60); do
 		if modem_present && { [ -e "$port" ] || [ -e /dev/ttyUSB1 ]; }; then
-			local p="$port"
+			p="$port"
 			[ -e "$p" ] || p=/dev/ttyUSB1
+			quiet_at_contenders
 			sendat "$p" "AT" | grep -q '"status": "success"' && return 0
 		fi
 		sleep 2
@@ -112,7 +127,8 @@ wait_modem_back() {
 
 wait_registered() {
 	local port="$1" i r
-	for i in $(seq 1 30); do
+	for i in $(seq 1 40); do
+		quiet_at_contenders
 		r=$(sendat "$port" "AT+CEREG?")
 		echo "$r" | grep -qE '\+CEREG: [0-9]+,[15]' && return 0
 		sleep 2
@@ -122,8 +138,11 @@ wait_registered() {
 
 apply_ip_from_cgpaddr() {
 	local port="$1" iface="$2" raw ip
+	quiet_at_contenders
 	raw=$(sendat "$port" "AT+CGPADDR=1")
 	ip=$(echo "$raw" | tr -d '\\' | sed -n 's/.*+CGPADDR: 1,"\([0-9.]*\)".*/\1/p')
+	# JSON may escape quotes
+	[ -n "$ip" ] || ip=$(echo "$raw" | sed -n 's/.*+CGPADDR: 1,\\"\([0-9.]*\)\\".*/\1/p')
 	[ -n "$ip" ] && [ "$ip" != "0.0.0.0" ] || return 1
 	[ -d "/sys/class/net/$iface" ] || iface=$(modem_iface "$(find_modem_section)") || return 1
 	ip link set "$iface" up 2>/dev/null
@@ -134,64 +153,74 @@ apply_ip_from_cgpaddr() {
 	uci -q set "network.2_1.ipaddr=$ip"
 	uci -q set network.2_1.netmask='255.255.255.255'
 	uci -q set network.2_1.gateway='0.0.0.0'
+	uci -q set "network.2_1.device=$iface"
 	uci -q commit network
 	log "applied $ip/32 on $iface"
 	return 0
 }
 
-soft_fix() {
-	local cfg="$1" iface="$2" port
-	port=$(at_port_of "$cfg")
-	[ -n "$port" ] || port=/dev/ttyUSB1
-
-	log "soft-fix: AT+CFUN=1,1 via $port (iface=$iface)"
-	sendat "$port" "AT+CFUN=1,1" >/dev/null
-
-	# dialers may wedge during reenum — clear them (do not call qmodem_network stop; it can hang)
-	killall -9 modem_dial.sh 2>/dev/null
-
-	sleep 5
-	if ! wait_modem_back "$port"; then
-		log "soft-fix: modem did not return"
-		return 1
-	fi
-	port=$(at_port_of "$cfg")
-	[ -n "$port" ] || port=/dev/ttyUSB1
-	[ -e "$port" ] || port=/dev/ttyUSB1
-
-	# keep mode 40
-	sendat "$port" "AT+GTUSBMODE?" | grep -q '+GTUSBMODE: 40' || \
-		sendat "$port" "AT+GTUSBMODE=40" >/dev/null
-
-	wait_registered "$port" || log "soft-fix: register timeout, continue anyway"
-
+dial_setup() {
+	local port="$1"
+	quiet_at_contenders
 	sendat "$port" "AT+CGDCONT=1,\"IPV4V6\",\"CMNET\"" >/dev/null
 	sendat "$port" "AT+CGACT=1,1" >/dev/null
 	sleep 3
+}
 
-	iface=$(modem_iface "$cfg") || iface=eth2
-	apply_ip_from_cgpaddr "$port" "$iface" || true
+soft_fix() {
+	local cfg="$1" iface="$2" port attempt
 
-	# restart dialer without hanging init stop
-	[ -x /usr/share/qmodem/modem_dial.sh ] && \
-		/usr/share/qmodem/modem_dial.sh "$cfg" dial >/dev/null 2>&1 &
+	port=$(at_port_of "$cfg")
+	[ -n "$port" ] || port=/dev/ttyUSB1
 
-	sleep 5
-	if wan_ok; then
-		log "soft-fix: WAN recovered"
-		return 0
-	fi
-	# one more IP apply after dial settled
-	iface=$(modem_iface "$cfg") || iface=eth2
-	apply_ip_from_cgpaddr "$port" "$iface" || true
-	sleep 3
-	wan_ok && log "soft-fix: WAN recovered after re-apply" && return 0
-	log "soft-fix: WAN still down"
+	# up to 2 soft-reboot attempts (first often leaves RNDIS still dead)
+	for attempt in 1 2; do
+		log "soft-fix attempt $attempt: AT+CFUN=1,1 via $port (iface=$iface)"
+		quiet_at_contenders
+		sendat "$port" "AT+CFUN=1,1" >/dev/null
+		killall -9 modem_dial.sh 2>/dev/null
+		sleep 5
+
+		if ! wait_modem_back "$port"; then
+			log "soft-fix: modem did not return (attempt $attempt)"
+			continue
+		fi
+		port=$(at_port_of "$cfg")
+		[ -n "$port" ] || port=/dev/ttyUSB1
+		[ -e "$port" ] || port=/dev/ttyUSB1
+
+		quiet_at_contenders
+		sendat "$port" "AT+GTUSBMODE?" | grep -q '+GTUSBMODE: 40' || \
+			sendat "$port" "AT+GTUSBMODE=40" >/dev/null
+
+		wait_registered "$port" || log "soft-fix: register timeout, continue anyway"
+		dial_setup "$port"
+
+		iface=$(modem_iface "$cfg") || iface=eth2
+		apply_ip_from_cgpaddr "$port" "$iface" || true
+
+		[ -x /usr/share/qmodem/modem_dial.sh ] && \
+			/usr/share/qmodem/modem_dial.sh "$cfg" dial >/dev/null 2>&1 &
+
+		sleep 6
+		if wan_ok; then
+			log "soft-fix: WAN recovered (attempt $attempt)"
+			return 0
+		fi
+		iface=$(modem_iface "$cfg") || iface=eth2
+		apply_ip_from_cgpaddr "$port" "$iface" || true
+		sleep 3
+		if wan_ok; then
+			log "soft-fix: WAN recovered after re-apply (attempt $attempt)"
+			return 0
+		fi
+		log "soft-fix: WAN still down (attempt $attempt)"
+	done
 	return 1
 }
 
 do_check() {
-	local cfg iface now
+	local cfg iface now since cooldown
 
 	cfg=$(find_modem_section) || {
 		log "no FM350 section; skip"
@@ -220,9 +249,7 @@ do_check() {
 		return 0
 	fi
 
-	# confirm it looks like RNDIS death or total no-route, not just DNS
 	if ! rndis_rx_dead "$iface"; then
-		# still no WAN — count as fail (route missing / PDP stale)
 		if ping -c 1 -W 1 127.0.0.1 >/dev/null 2>&1; then
 			fails=$((fails + 1))
 			log "WAN fail ($fails/$FAILS_NEED) iface=$iface (not classic rx0)"
@@ -235,24 +262,37 @@ do_check() {
 
 	[ "$fails" -ge "$FAILS_NEED" ] || return 0
 
-	if [ $((now - last_fix)) -lt "$COOLDOWN" ]; then
-		log "in cooldown ($((now - last_fix))s < ${COOLDOWN}s); skip fix"
+	# Choose cooldown based on whether last fix succeeded
+	if [ "${last_fix_ok:-0}" -gt 0 ] && [ "$last_fix_ok" -eq "$last_fix" ]; then
+		cooldown=$COOLDOWN_OK
+	else
+		cooldown=$COOLDOWN_FAIL
+	fi
+	# first run / never fixed
+	[ "$last_fix" = "0" ] && cooldown=0
+
+	since=$((now - last_fix))
+	if [ "$last_fix" != "0" ] && [ "$since" -lt "$cooldown" ]; then
+		log "in cooldown (${since}s < ${cooldown}s); skip fix"
 		return 0
 	fi
 
-	# lock
 	mkdir "$LOCK_FILE" 2>/dev/null || {
 		log "fix already running"
 		return 0
 	}
 	trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT
 
+	last_fix=$(date +%s)
 	if soft_fix "$cfg" "$iface"; then
 		fails=0
 		last_fix=$(date +%s)
+		last_fix_ok=$last_fix
 	else
+		# keep pressure to retry after COOLDOWN_FAIL; do not pretend healthy
+		fails=$FAILS_NEED
 		last_fix=$(date +%s)
-		fails=0
+		last_fix_ok=0
 	fi
 	save_state
 	rmdir "$LOCK_FILE" 2>/dev/null
@@ -260,7 +300,7 @@ do_check() {
 }
 
 daemon_loop() {
-	log "daemon start interval=${INTERVAL}s fails_need=$FAILS_NEED cooldown=${COOLDOWN}s"
+	log "daemon start interval=${INTERVAL}s fails_need=$FAILS_NEED cooldown_ok=${COOLDOWN_OK}s cooldown_fail=${COOLDOWN_FAIL}s"
 	while true; do
 		do_check
 		sleep "$INTERVAL"
